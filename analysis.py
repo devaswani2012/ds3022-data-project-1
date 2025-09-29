@@ -284,6 +284,9 @@ def analyze_data():
 
         # Time series CO2
 
+	        # Visualizations
+
+        # Time series CO2
         df = con.execute("""
             SELECT service_type, trip_year, SUM(trip_co2_kgs) AS total_co2_kg
             FROM (
@@ -296,13 +299,22 @@ def analyze_data():
             GROUP BY service_type, trip_year
             ORDER BY trip_year;
         """).fetchdf()
+
         plt.figure(figsize=(10, 6))
-        sns.lineplot(data=df, x='trip_year', y='total_co2_kg', hue='service_type', marker='o')
-        plt.title('Total CO2 Emissions by Year')
-        plt.xlabel('Year')
-        plt.ylabel('Total CO2 Emissions (kg)')
-        plt.legend(title='Service Type')
-        plt.savefig('total_co2_emissions_by_year.png')
+        for service_type, group in df.groupby("service_type"):
+            plt.plot(
+                group["trip_year"].to_numpy(),
+                group["total_co2_kg"].to_numpy(),
+                marker="o",
+                label=service_type
+            )
+
+        plt.title("Total CO2 Emissions by Year")
+        plt.xlabel("Year")
+        plt.ylabel("Total CO2 Emissions (kg)")
+        plt.legend(title="Service Type")
+        plt.grid(True, linestyle="--", alpha=0.6)
+        plt.savefig("total_co2_emissions_by_year.png")
         plt.close()
         logger.info("Saved visualization: total_co2_emissions_by_year.png")
         flush_logs()

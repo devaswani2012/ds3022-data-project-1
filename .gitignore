@@ -1,0 +1,16 @@
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Databases and logs
+*.db
+*.log
+
+# dbt build artifacts
+dbt/logs/
+dbt/target/
+
+# duckdb database files
+*.duckdb
+*.parquet

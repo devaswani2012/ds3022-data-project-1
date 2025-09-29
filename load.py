@@ -1,90 +1,99 @@
 import duckdb
 import os
 import logging
+import time
 
 logging.basicConfig(
-    level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='load.log'
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='load.log',
+    filemode='a',
+    force=True
 )
 logger = logging.getLogger(__name__)
 
-DATA_DIR = "data"
-EMISSIONS_FILE = os.path.join(DATA_DIR, "vehicle_emissions.csv")
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
 
-def load_taxi_data(con, color):
-    table_name = f"{color}_trips_2024"
-    # first file creates table
-    first_file = os.path.join(DATA_DIR, 
-f"{color}_tripdata_2024-01.parquet")
-    con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_parquet('{first_file}');")
-    logger.info(f"{table_name} created from {first_file}")
-
-    # remaining months
-    for month in range(2, 13):
-        file_path = os.path.join(DATA_DIR, 
-f"{color}_tripdata_2024-{month:02d}.parquet")
-        if os.path.exists(file_path):
-            con.execute(f"INSERT INTO {table_name} SELECT * FROM read_parquet('{file_path}');")
-            logger.info(f"{file_path} inserted into {table_name}")
-        else:
-            logger.warning(f"{file_path} not found, skipping.")
-
-def load_emissions(con):
-    con.execute(f"CREATE OR REPLACE TABLE vehicle_emissions AS SELECT * FROM read_csv_auto('{EMISSIONS_FILE}');")
-    logger.info("vehicle_emissions table created")
+def flush_logs():
+    for handler in logger.handlers:
+        handler.flush()
 
 def load_parquet_files():
-    con = None
+
+    con = None  
+
     try:
-        # Connect to local DuckDB
+        # Connect to loc    al DuckDB instance
         con = duckdb.connect(database='emissions.duckdb', read_only=False)
         logger.info("Connected to DuckDB instance")
+        flush_logs()
 
-        # Load taxi data
-        logger.info("Loading Yellow taxi data...")
-        load_taxi_data(con, "yellow")
+        # Create consolidated tables if not exists
+        con.execute("DROP TABLE IF EXISTS yellow_tripdata;")
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS yellow_tripdata (VendorID INTEGER, tpep_pickup_datetime TIMESTAMP, tpep_dropoff_datetime TIMESTAMP, passenger_count INTEGER, trip_distance DOUBLE);
+        """)
 
-        logger.info("Loading Green taxi data...")
-        load_taxi_data(con, "green")
+        con.execute("DROP TABLE IF EXISTS green_tripdata;")
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS green_tripdata (VendorID INTEGER, lpep_pickup_datetime TIMESTAMP, lpep_dropoff_datetime TIMESTAMP, passenger_count INTEGER, trip_distance DOUBLE);
+        """)
+        logger.info("Initialized consolidated tables")
+        flush_logs()
 
-        # Load emissions lookup
-        logger.info("Loading vehicle emissions data...")
-        load_emissions(con)
+        # Loop over 10 years and all the months
+        for year in range(2015, 2025):
+            for month in range(1, 13):
+                month_str = f"{month:02d}"
+                
+                # Load yellow trip data
+                yellow_url = f"https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{year}-{month_str}.parquet"
+                
+                try:
+                    time.sleep(60) 
+                    con.execute(f"""
+                    INSERT INTO yellow_tripdata SELECT VendorID, tpep_pickup_datetime, tpep_dropoff_datetime, passenger_count, trip_distance FROM read_parquet('{yellow_url}');
+                    """)
+                    logger.info(f"Loaded yellow trip data for {year}-{month_str}")
+                except Exception as e:
+                    logger.warning(f"Failed to load yellow trip data for {year}-{month_str}: {e}")
+                flush_logs()    
 
-        # Print row counts
-        for table in ["yellow_trips_2024", "green_trips_2024", "vehicle_emissions"]:
-            count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            logger.info(f"{table}: {count:,} rows")
-            print(f"{table}: {count:,} rows")
+                # Load green trip data
+                green_url = f"https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_{year}-{month_str}.parquet"
+                
+                try: 
+                    time.sleep(60)  
+                    con.execute(f"""
+                    INSERT INTO green_tripdata SELECT VendorID, lpep_pickup_datetime, lpep_dropoff_datetime, passenger_count, trip_distance FROM read_parquet('{green_url}');
+                    """)
+                    logger.info(f"Loaded green trip data for {year}-{month_str}")
+                except Exception as e:
+                    logger.warning(f"Failed to load green trip data for {year}-{month_str}: {e}")
+                flush_logs()
+        
+        # Basic Descriptive Statitics
+        yellow_mean1 = con.execute("SELECT AVG(trip_distance) FROM yellow_tripdata").fetchone()[0]
+        green_mean1 = con.execute("SELECT AVG(trip_distance) FROM green_tripdata").fetchone()[0]
+        logger.info(f"Average trip distance for yellow tripdata: {yellow_mean1}")
+        logger.info(f"Average trip distance for green tripdata: {green_mean1}")
+        flush_logs()
 
-        # Additional basic descriptive stats for Yellow and Green trips
-        for table in ["yellow_trips_2024", "green_trips_2024"]:
-            stats = con.execute(f"""
-                SELECT 
-                    SUM(trip_distance) AS total_distance,
-                    SUM(fare_amount) AS total_fare,
-                    AVG(trip_distance) AS avg_distance,
-                    AVG(fare_amount) AS avg_fare
-                FROM {table};
-            """).fetchone()
-            
-            total_distance, total_fare, avg_distance, avg_fare = stats
-            logger.info(f"{table} stats - total distance: {total_distance}, total fare: {total_fare}, "
-                        f"avg distance: {avg_distance:.2f}, avg fare: {avg_fare:.2f}")
-            print(f"{table} stats - total distance: {total_distance}, total fare: {total_fare}, "
-                  f"avg distance: {avg_distance:.2f}, avg fare: {avg_fare:.2f}")
+        yellow_mean2 = con.execute("SELECT AVG(passenger_count) FROM yellow_tripdata").fetchone()[0]
+        green_mean2 = con.execute("SELECT AVG(passenger_count) FROM green_tripdata").fetchone()[0]
+        logger.info(f"Average passenger count for yellow tripdata: {yellow_mean2}")
+        logger.info(f"Average passenger count for green tripdata: {green_mean2}")
+        flush_logs()
 
-        logger.info("All data loaded successfully")
 
     except Exception as e:
         print(f"An error occurred: {e}")
         logger.error(f"An error occurred: {e}")
-
-    finally:
-        if con:
-            con.close()
-            logger.info("DuckDB connection closed")
+        flush_logs()
 
 if __name__ == "__main__":
     load_parquet_files()
-

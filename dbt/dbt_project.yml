@@ -11,7 +11,16 @@ seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 
+seeds:
+  taxi_co2:
+    vehicle_emissions:
+      +file: "vehicle_emissions.csv"
+      +schema: main
+      +quote_columns: true
+
 models:
-  nyc_taxi_emissions:
+  taxi_co2:
     staging:
+      +materialized: table
+    transform:
       +materialized: table
